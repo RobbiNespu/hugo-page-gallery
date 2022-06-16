@@ -18,7 +18,9 @@
 
 {{ $margins := .Get "margins" | default (.Site.Params.galleryRowMargins | default 5) }}
 
-{{ $resizeOptions := .Get "resizeOptions" | default (.Site.Params.galleryResizeOptions | default "300x150 q85 Lanczos") }}
+{{ $thumbnailResizeOptions := .Get "thumbnailResizeOptions" | default (.Site.Params.galleryThumbnailResizeOptions | default "300x150 q85 Lanczos") }}
+
+{{ $imageResizeOptions := .Get "imageResizeOptions" | default .Site.Params.galleryImageResizeOptions }}
 
 {{ $loadJQuery := .Get "loadJQuery" | default (.Site.Params.galleryLoadJQuery | default false) }}
 
@@ -46,7 +48,7 @@
 	{{ if $loadJQuery }}
 		<script src="{{ "/shortcode-gallery/jquery-3.6.0.min.js" | relURL }}"></script>
 	{{ end }}
-	
+
 	{{ if not (eq $previewType "none") }}
 		<script src="{{ "/shortcode-gallery/lazy/jquery.lazy.min.js" | relURL }}"></script>
 	{{ end }}
@@ -79,15 +81,15 @@
 Ordinal increases every time this shortcode is used in a document
 Ordinal: {{ .Ordinal}}
 -->
-{{ $galleryId := (printf "gallery-%v" .Ordinal)}}
-{{ $galleryWrapperId := (printf "gallery-%v-wrapper" .Ordinal)}}
+{{ $galleryId := (printf "gallery-%v-%v" .Page.File.UniqueID .Ordinal)}}
+{{ $galleryWrapperId := (printf "gallery-%v-%v-wrapper" .Page.File.UniqueID .Ordinal)}}
 
 <div id="{{ $galleryWrapperId }}" class="gallery-wrapper">
 <div id="{{ $galleryId }}" class="justified-gallery">
 	{{ range $original := sort $images "Name" $sortOrder}}
 		{{ if eq $original.ResourceType "image" }}
-		
-			{{/* Get metadata from sidecar file, if present. Else an empty dictionary is used. */}}	
+
+			{{/* Get metadata from sidecar file, if present. Else an empty dictionary is used. */}}
 			{{ $metaFileName := print $original.Name ".meta"}}
 			{{ $metadata := $currentPage.Page.Resources.GetMatch ($metaFileName) }}
 			{{ if $metadata }}
@@ -105,7 +107,7 @@ Ordinal: {{ .Ordinal}}
 			{{ end }}
 
 
-			{{/* Compute rotation to correct orientation of thumbnail in case the exif contains a value for orientation. See issue #22. */}}
+			{{/* Compute rotation to correct orientation of thumbnail (and downscaled gallery images) in case the exif contains a value for orientation. See issue #22. */}}
 			{{ $rotation := "" }}
 			{{ with $metadata.Orientation }}
 				{{/* Exif orientation is explained here: https://www.impulseadventure.com/photo/exif-orientation.html */}}
@@ -125,11 +127,18 @@ Ordinal: {{ .Ordinal}}
 			{{ end }}
 
 			{{/* Create thumbnail, rotate it if needed */}}
-			{{ $thumbnail := ($original.Fit (printf "%s %s" $resizeOptions $rotation)) }}
+			{{ $thumbnail := ($original.Fit (printf "%s %s" $thumbnailResizeOptions $rotation)) }}
 
 
 			<div>
-				<a href="{{ $original.RelPermalink }}" 
+				{{ $full := "" }}
+				{{ if $imageResizeOptions }}
+					{{/* Downscale gallery image, rotate it if needed */}}
+					{{ $full = ($original.Fit (printf "%s %s" $imageResizeOptions $rotation)) }}
+				{{ else }}
+					{{ $full = $original }}
+				{{ end }}
+				<a href="{{ $full.RelPermalink }}"
 					class="galleryImg"
 					{{ with $metadata }}
 						{{ if .Title }}
@@ -148,7 +157,7 @@ Ordinal: {{ .Ordinal}}
 						{{ end }}
 					{{ end }}
 					>
-					<img			
+					<img
 						width="{{ $thumbnail.Width }}" height="{{ $thumbnail.Height }}"
 
 						{{ if (eq $previewType "blur") }}
@@ -196,25 +205,11 @@ Ordinal: {{ .Ordinal}}
 		const gallery = $("#{{ $galleryId }}");
 		{{ $lastRowJustification := .Get "lastRow" | default (.Site.Params.galleryLastRow | default "justify") }}
 
-		gallery.justifiedGallery({
-			rowHeight : {{ $rowHeight }},
-			margins : {{ $margins }},
-			border : 0,
-			waitThumbnailsLoad : false,
-			lastRow : {{ $lastRowJustification }},
-			captions : false,
-			// if there is at least one filter option
-			{{ if not (eq $filterOptions "[]") }}
-				// we first show no images at all
-				// till the code way below selects a filter and applies it 
-				// this prevent creating the layout twice
-				filter : () => false
-			{{ end }}
-		});
-
 		// the instance of swipebox, it will be set once justifiedGallery is initialized
 		let swipeboxInstance = null;
 
+		// before the gallery initialization the listener has to be added
+		// else we can get a race condition and the listener is never called
 		gallery.on('jg.complete', () => {
 			{{ if or (eq $previewType "blur") (eq $previewType "color") }}
 				// if there is already some low resolution image data loaded, then we will wait for loading´
@@ -234,6 +229,23 @@ Ordinal: {{ .Ordinal}}
 			);
 		});
 
+		// initialize the justified gallery
+		gallery.justifiedGallery({
+			rowHeight : {{ $rowHeight }},
+			margins : {{ $margins }},
+			border : 0,
+			waitThumbnailsLoad : false,
+			lastRow : {{ $lastRowJustification }},
+			captions : false,
+			// if there is at least one filter option
+			{{ if not (eq $filterOptions "[]") }}
+				// we first show no images at all
+				// till the code way below selects a filter and applies it
+				// this prevent creating the layout twice
+				filter : () => false
+			{{ end }}
+		});
+
 		// only include JS code for filter options if there at least one filter option
 		{{ if not (eq $filterOptions "[]") }}
 
@@ -243,7 +255,7 @@ Ordinal: {{ .Ordinal}}
 				return (entry, index, array) => {
 					let meta = $(entry).find("a").attr("data-meta");
 					meta = meta ? JSON.parse(meta) : {};
-					
+
 					let include = filterFunction(meta);
 
 					// only those images visible in justified gallery should be displayed
@@ -297,9 +309,9 @@ Ordinal: {{ .Ordinal}}
 				});
 			};
 
-			
+
 			const filterOptions = {{ $filterOptions | safeJS }};
-			
+
 			// insert a div for inserting filter buttons before the gallery
 			const filterBar = $("<div class='justified-gallery-filterbar'/>");
 			gallery.before(filterBar);
@@ -345,7 +357,7 @@ Ordinal: {{ .Ordinal}}
 				filterBar.find('.selected').removeClass('selected');
 				filterButton.addClass("selected");
 			};
-	
+
 			// check if the url contains an instruction to apply a specific filter
 			// eg. example.com/images/#gallery-filter=Birds
 			const params = new URLSearchParams(location.hash.replace(/^\#/,""));
@@ -355,7 +367,7 @@ Ordinal: {{ .Ordinal}}
 				activeFilter = filterOptions[0].label;
 			}
 
-			// create a button for each filter entry 
+			// create a button for each filter entry
 			filterOptions.forEach(filterConfig => {
 				let filter; // create a filter function based on the available attributes of filterConfig
 				if(filterConfig.tags) {
